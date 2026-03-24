@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>QuizBlast — Oyun</title>
+<style>
+:root{
+  --bg:#08080f; --s1:#111120; --s2:#191930; --border:#2a2a45;
+  --accent:#f7c948; --red:#ff4f6d; --blue:#4fc3f7; --green:#4cdf80;
+  --text:#f0f0fa; --muted:#6b6b9a;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+
+/* ── SCREENS ── */
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto;transition:opacity .3s}
+.screen.hidden{opacity:0;pointer-events:none}
+
+/* ── JOIN SCREEN ── */
+.logo{font-size:2.2rem;font-weight:900;letter-spacing:2px;margin-bottom:6px}
+.logo span{color:var(--red)}
+.tagline{color:var(--muted);font-size:.9rem;margin-bottom:32px}
+.join-card{background:var(--s1);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:380px}
+.join-title{font-size:1rem;font-weight:700;color:var(--accent);margin-bottom:18px;letter-spacing:1px;text-transform:uppercase}
+label{display:block;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+input{
+  width:100%;background:var(--bg);border:1.5px solid var(--border);
+  border-radius:8px;color:var(--text);padding:13px 16px;font-size:1rem;
+  font-family:inherit;outline:none;transition:border-color .2s;margin-bottom:14px;
+}
+input:focus{border-color:var(--accent)}
+input.room-input{font-size:1.6rem;font-weight:900;letter-spacing:6px;text-align:center;text-transform:uppercase}
+.btn-join{
+  width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;
+  padding:15px;font-size:1rem;font-weight:700;font-family:inherit;cursor:pointer;
+  letter-spacing:1px;text-transform:uppercase;transition:all .2s;
+}
+.btn-join:hover{background:#ffd84d;transform:translateY(-2px)}
+.btn-join:active{transform:scale(.97)}
+.error-msg{color:var(--red);font-size:.85rem;text-align:center;margin-top:10px;min-height:20px}
+
+/* ── WAITING SCREEN ── */
+.wait-card{
+  background:var(--s1);border:1px solid var(--border);border-radius:20px;
+  padding:32px 24px;width:100%;max-width:360px;text-align:center;
+}
+.avatar{
+  width:80px;height:80px;border-radius:50%;margin:0 auto 16px;
+  display:flex;align-items:center;justify-content:center;font-size:2rem;
+  background:var(--s2);border:2px solid var(--accent);
+  animation:float 3s ease-in-out infinite;
+}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.player-name{font-size:1.4rem;font-weight:700;margin-bottom:4px}
+.wait-msg{color:var(--muted);font-size:.9rem;margin-bottom:20px}
+.room-badge{
+  display:inline-block;background:rgba(247,201,72,.12);border:1px solid rgba(247,201,72,.3);
+  color:var(--accent);font-size:1.2rem;font-weight:900;letter-spacing:4px;
+  padding:8px 20px;border-radius:10px;margin-bottom:16px;
+}
+.player-count-badge{color:var(--muted);font-size:.85rem}
+.dots{display:inline-flex;gap:6px;margin-top:12px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:bounce .8s infinite}
+.dot:nth-child(2){animation-delay:.15s}
+.dot:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
+
+/* ── QUESTION SCREEN ── */
+.game-wrap{width:100%;max-width:500px;display:flex;flex-direction:column;gap:12px}
+.top-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.score-pill{
+  background:rgba(247,201,72,.12);border:1px solid rgba(247,201,72,.25);
+  color:var(--accent);font-weight:700;font-size:.85rem;
+  padding:5px 14px;border-radius:20px;
+}
+.streak-pill{
+  background:rgba(255,79,109,.12);border:1px solid rgba(255,79,109,.25);
+  color:var(--red);font-weight:700;font-size:.85rem;
+  padding:5px 12px;border-radius:20px;
+  display:none;
+}
+.q-progress{
+  height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-bottom:8px;
+}
+.q-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--red));border-radius:2px;transition:width .5s}
+
+/* Timer halkası */
+.timer-ring-wrap{display:flex;justify-content:center;margin-bottom:4px}
+.timer-ring{position:relative;width:72px;height:72px}
+.timer-ring svg{transform:rotate(-90deg)}
+.timer-ring .ring-bg{fill:none;stroke:var(--border);stroke-width:5}
+.timer-ring .ring-fill{fill:none;stroke-width:5;stroke-linecap:round;transition:stroke-dashoffset .9s linear,stroke .3s}
+.timer-label{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;font-weight:900;font-size:1.2rem;
+  line-height:1;
+}
+.timer-label small{font-size:.55rem;color:var(--muted);font-weight:400}
+
+/* Soru kutusu */
+.q-box{
+  background:var(--s1);border:1px solid var(--border);border-radius:16px;
+  padding:20px;position:relative;overflow:hidden;
+}
+.q-box::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--red),var(--blue))}
+.q-cat-tag{
+  display:inline-block;background:rgba(79,195,247,.1);color:var(--blue);
+  font-size:.65rem;letter-spacing:2px;padding:3px 10px;border-radius:20px;
+  border:1px solid rgba(79,195,247,.2);margin-bottom:10px;text-transform:uppercase;
+}
+.q-text{font-size:1.1rem;font-weight:600;line-height:1.5;color:var(--text)}
+
+/* Şık butonları */
+.opts{display:flex;flex-direction:column;gap:10px}
+.opt-btn{
+  background:var(--s1);border:1.5px solid var(--border);
+  border-radius:12px;padding:14px 16px;cursor:pointer;
+  display:flex;align-items:center;gap:12px;
+  transition:all .2s;font-family:inherit;color:var(--text);
+  font-size:.95rem;text-align:left;width:100%;
+  -webkit-tap-highlight-color:transparent;
+}
+.opt-btn:active{transform:scale(.97)}
+.opt-btn:not(:disabled):hover{border-color:var(--accent);background:rgba(247,201,72,.06)}
+.opt-btn.selected{border-color:var(--accent);background:rgba(247,201,72,.08)}
+.opt-btn.correct{border-color:var(--green);background:rgba(76,223,128,.12);animation:correctPop .4s ease}
+.opt-btn.wrong{border-color:var(--red);background:rgba(255,79,109,.1);animation:shake .4s ease}
+.opt-btn:disabled{cursor:default}
+@keyframes correctPop{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+
+.opt-letter{
+  min-width:34px;height:34px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-weight:900;font-size:.9rem;border:2px solid currentColor;flex-shrink:0;
+}
+
+/* Can hakları */
+.lifelines{display:flex;gap:8px;justify-content:center;margin-top:4px}
+.ll-btn{
+  flex:1;background:var(--s2);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);padding:9px 6px;
+  font-family:inherit;font-size:.75rem;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  transition:all .2s;
+}
+.ll-btn:not(:disabled):hover{border-color:var(--blue);color:var(--blue)}
+.ll-btn:disabled{opacity:.3;cursor:default}
+.ll-icon{font-size:1.1rem}
+
+/* Hint popup */
+.hint-popup{
+  background:rgba(247,201,72,.1);border:1px solid rgba(247,201,72,.3);
+  border-radius:10px;padding:12px 16px;font-size:.85rem;color:var(--accent);
+  text-align:center;animation:fadeIn .3s ease;display:none;
+}
+.hint-popup.show{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* Cevap bekleme */
+.answered-state{text-align:center;padding:12px 0}
+.answered-icon{font-size:3rem;margin-bottom:8px;animation:pop .3s ease}
+@keyframes pop{0%{transform:scale(0)}80%{transform:scale(1.2)}100%{transform:scale(1)}}
+.answered-msg{font-size:1rem;font-weight:600;margin-bottom:4px}
+.answered-sub{color:var(--muted);font-size:.85rem}
+.answer-loader{display:flex;gap:6px;justify-content:center;margin-top:12px}
+
+/* Sonuç overlay */
+.result-overlay{
+  position:absolute;inset:0;background:rgba(8,8,15,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  border-radius:12px;padding:20px;text-align:center;
+  animation:fadeIn .3s ease;
+}
+.result-big{font-size:2.5rem;margin-bottom:6px}
+.result-pts{font-size:1.4rem;font-weight:900;color:var(--accent);margin-bottom:4px}
+.result-correct-text{font-size:.9rem;color:var(--muted)}
+
+/* Finish screen */
+.finish-card{background:var(--s1);border:1px solid var(--border);border-radius:20px;padding:28px 24px;width:100%;max-width:360px;text-align:center}
+.finish-rank{font-size:4rem;font-weight:900;color:var(--accent);line-height:1}
+.finish-score{font-size:1.1rem;color:var(--muted);margin-bottom:8px}
+.finish-msg{font-size:1rem;margin-bottom:20px}
+.lb-mini{width:100%;margin-top:12px}
+.lb-mini-row{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;margin-bottom:4px;background:var(--s2)}
+.lb-mini-row.me{border:1px solid var(--accent);background:rgba(247,201,72,.05)}
+.lb-mini-rank{min-width:28px;font-weight:700;font-size:.9rem}
+.lb-mini-name{flex:1;font-size:.9rem}
+.lb-mini-score{color:var(--accent);font-weight:700;font-size:.9rem}
+
+/* Toast */
+#toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--s2);border:1px solid var(--accent);border-radius:10px;padding:10px 20px;font-size:.9rem;transition:transform .3s;z-index:999;white-space:nowrap}
+#toast.show{transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<!-- JOIN SCREEN -->
+<div class="screen" id="join-screen">
+  <div class="logo">Quiz<span>Blast</span></div>
+  <div class="tagline">Katıl ve oyna!</div>
+  <div class="join-card">
+    <div class="join-title">🎮 Oyuna Katıl</div>
+    <label>Oda Kodu</label>
+    <input type="text" id="room-input" class="room-input" placeholder="ABCD" maxlength="4" autocomplete="off" autocapitalize="characters">
+    <label>Kullanıcı Adı</label>
+    <input type="text" id="name-input" placeholder="Adınızı girin" maxlength="20" autocomplete="off">
+    <button class="btn-join" onclick="joinGame()">KATIL →</button>
+    <div class="error-msg" id="join-error"></div>
+  </div>
+</div>
+
+<!-- WAITING SCREEN -->
+<div class="screen hidden" id="wait-screen">
+  <div class="wait-card">
+    <div class="avatar" id="wait-avatar">😎</div>
+    <div class="player-name" id="wait-name">Oyuncu</div>
+    <div class="wait-msg">Oyun başlayana kadar bekleyin</div>
+    <div class="room-badge" id="wait-room">XXXX</div>
+    <div class="player-count-badge"><span id="wait-count">0</span> oyuncu bağlı</div>
+    <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+  </div>
+</div>
+
+<!-- QUESTION SCREEN -->
+<div class="screen hidden" id="question-screen">
+  <div class="game-wrap">
+    <div class="top-bar">
+      <div class="score-pill">⭐ <span id="my-score">0</span></div>
+      <div id="q-pos-label" style="font-size:.8rem;color:var(--muted)"></div>
+      <div class="streak-pill" id="streak-pill">🔥 <span id="my-streak">0</span></div>
+    </div>
+    <div class="q-progress"><div class="q-progress-fill" id="q-progress-fill" style="width:0%"></div></div>
+
+    <div class="timer-ring-wrap">
+      <div class="timer-ring">
+        <svg viewBox="0 0 72 72" width="72" height="72">
+          <circle class="ring-bg" cx="36" cy="36" r="30"/>
+          <circle class="ring-fill" id="ring-fill" cx="36" cy="36" r="30"
+            stroke="#f7c948"
+            stroke-dasharray="188.5"
+            stroke-dashoffset="0"/>
+        </svg>
+        <div class="timer-label">
+          <span id="timer-num">20</span>
+          <small>SN</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="q-box" id="q-box">
+      <div class="q-cat-tag" id="player-q-cat">Bilim</div>
+      <div class="q-text" id="player-q-text">Soru yükleniyor...</div>
+    </div>
+
+    <div class="opts" id="player-opts"></div>
+
+    <!-- Cevap verildi durumu -->
+    <div class="answered-state" id="answered-state" style="display:none">
+      <div class="answered-icon" id="answered-icon">⏳</div>
+      <div class="answered-msg" id="answered-msg">Cevabınız alındı!</div>
+      <div class="answered-sub">Host cevabı açıklayana kadar bekleyin</div>
+      <div class="answer-loader">
+        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      </div>
+    </div>
+
+    <!-- Hint -->
+    <div class="hint-popup" id="hint-popup"></div>
+
+    <!-- Can hakları -->
+    <div class="lifelines" id="lifelines">
+      <button class="ll-btn" id="ll-fiftyfifty" onclick="useLifeline('fiftyfifty')">
+        <span class="ll-icon">½</span>50/50
+      </button>
+      <button class="ll-btn" id="ll-hint" onclick="useLifeline('hint')">
+        <span class="ll-icon">💡</span>İpucu
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- FINISH SCREEN -->
+<div class="screen hidden" id="finish-screen">
+  <div class="finish-card">
+    <div style="font-size:2.5rem;margin-bottom:8px">🏁</div>
+    <div class="finish-rank" id="finish-rank">#1</div>
+    <div class="finish-score" id="finish-score">0 puan</div>
+    <div class="finish-msg" id="finish-msg">Harika!</div>
+    <div class="lb-mini" id="finish-lb"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const AVATARS = ['😎','🦁','🐯','🦊','🐺','🦅','🐲','🦄','🐸','🤖','👾','🎯'];
+let playerId = localStorage.getItem('qb_player_id') || '';
+let playerName = localStorage.getItem('qb_player_name') || '';
+let roomCode = '';
+let pollInterval = null;
+let currentQIdx = -1;
+let lastStatus = '';
+let timerMax = 20;
+let timerAnim = null;
+let hiddenOpts = new Set();
+
+// URL'den oda kodu al
+const urlParams = new URLSearchParams(location.search);
+const urlRoom = urlParams.get('room');
+if (urlRoom) {
+  document.getElementById('room-input').value = urlRoom.toUpperCase();
+  setTimeout(() => document.getElementById('name-input').focus(), 100);
+}
+
+function toast(msg, dur=2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => {
+    s.classList.toggle('hidden', s.id !== id);
+  });
+}
+
+async function joinGame() {
+  const name = document.getElementById('name-input').value.trim();
+  const room = document.getElementById('room-input').value.trim().toUpperCase();
+  const errEl = document.getElementById('join-error');
+  errEl.textContent = '';
+
+  if (!name) { errEl.textContent = '⚠️ Lütfen bir isim girin'; return; }
+  if (!room || room.length < 2) { errEl.textContent = '⚠️ Oda kodu gerekli'; return; }
+
+  const res = await fetch('/api/join', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, room})
+  });
+  const data = await res.json();
+  if (!data.ok) { errEl.textContent = '❌ ' + data.error; return; }
+
+  playerId = data.player_id;
+  playerName = data.name;
+  roomCode = room;
+  localStorage.setItem('qb_player_id', playerId);
+  localStorage.setItem('qb_player_name', playerName);
+
+  // Waiting ekranı
+  const avatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
+  document.getElementById('wait-avatar').textContent = avatar;
+  document.getElementById('wait-name').textContent = playerName;
+  document.getElementById('wait-room').textContent = roomCode;
+  showScreen('wait-screen');
+  startPolling();
+}
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(pollState, 1200);
+}
+
+async function pollState() {
+  try {
+    const res = await fetch(`/api/state?player_id=${playerId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    handleState(data);
+  } catch(e) {}
+}
+
+function handleState(data) {
+  document.getElementById('wait-count').textContent = data.player_count;
+
+  if (data.status === 'waiting') {
+    if (lastStatus !== 'waiting') showScreen('wait-screen');
+  }
+  else if (data.status === 'question') {
+    const q = data.question;
+    if (!q) return;
+
+    // Soru değiştiyse sıfırla
+    if (q.idx !== currentQIdx) {
+      currentQIdx = q.idx;
+      hiddenOpts = new Set();
+      renderQuestion(q, data.lifelines);
+      showScreen('question-screen');
+    }
+    timerMax = Math.round(data.timer_remaining + (data.answered ? 0 : 0)) || 20;
+    if (!data.answered) {
+      updateTimer(data.timer_remaining, timerMax);
+    }
+
+    // Oyuncu zaten cevap verdiyse
+    if (data.answered) {
+      showAnsweredState();
+    }
+
+    // Skorlar
+    document.getElementById('my-score').textContent = data.my_score || 0;
+    const streak = data.my_streak || 0;
+    document.getElementById('my-streak').textContent = streak;
+    document.getElementById('streak-pill').style.display = streak > 1 ? 'flex' : 'none';
+
+    // İlerleme
+    if (q.total > 0) {
+      const pct = (q.idx / q.total) * 100;
+      document.getElementById('q-progress-fill').style.width = pct + '%';
+      document.getElementById('q-pos-label').textContent = `${q.idx+1} / ${q.total}`;
+    }
+  }
+  else if (data.status === 'answer') {
+    // Cevap açıklandı — sadece doğru şıkkı işaretle
+    if (lastStatus === 'question') {
+      showScreen('question-screen');
+      showAnsweredState(true);
+    }
+  }
+  else if (data.status === 'finished') {
+    clearInterval(pollInterval);
+    showFinish(data);
+  }
+
+  lastStatus = data.status;
+}
+
+function renderQuestion(q, lifelines) {
+  document.getElementById('player-q-cat').textContent = q.category || 'Genel';
+  document.getElementById('player-q-text').textContent = q.q;
+
+  // Şıklar
+  const letters = ['A','B','C','D'];
+  const colors = ['#4fc3f7','#c864dc','#f7c948','#4cdf80'];
+  const opts = document.getElementById('player-opts');
+  opts.innerHTML = q.opts.map((opt, i) => `
+    <button class="opt-btn" id="popt-${i}" onclick="selectAnswer(${i})">
+      <span class="opt-letter" style="color:${colors[i]}">${letters[i]}</span>
+      <span>${escHtml(opt)}</span>
+    </button>
+  `).join('');
+
+  // Answered state gizle
+  document.getElementById('answered-state').style.display = 'none';
+  opts.style.display = 'flex';
+
+  // Can hakları
+  const llf = document.getElementById('ll-fiftyfifty');
+  const llh = document.getElementById('ll-hint');
+  if (lifelines) {
+    llf.disabled = !lifelines.fiftyfifty;
+    llh.disabled = !lifelines.hint;
+  }
+
+  // Hint temizle
+  document.getElementById('hint-popup').classList.remove('show');
+  document.getElementById('hint-popup').textContent = '';
+}
+
+function updateTimer(remaining, max) {
+  if (timerAnim) clearTimeout(timerAnim);
+  const circumference = 188.5;
+  const pct = Math.max(0, remaining / (max || 20));
+  const offset = circumference * (1 - pct);
+
+  const ring = document.getElementById('ring-fill');
+  const numEl = document.getElementById('timer-num');
+  if (!ring) return;
+
+  const color = pct > 0.5 ? '#4cdf80' : pct > 0.25 ? '#f7c948' : '#ff4f6d';
+  ring.style.stroke = color;
+  ring.style.strokeDashoffset = offset;
+  numEl.textContent = Math.ceil(remaining);
+  numEl.style.color = color;
+}
+
+async function selectAnswer(idx) {
+  if (hiddenOpts.has(idx)) return;
+  // Butonu seçili yap
+  document.querySelectorAll('.opt-btn').forEach(b => b.disabled = true);
+  document.getElementById(`popt-${idx}`)?.classList.add('selected');
+
+  const res = await fetch('/api/answer', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({player_id:playerId, answer:idx})
+  });
+  const data = await res.json();
+
+  if (data.ok) {
+    showAnsweredState();
+    toast('✅ Cevabınız gönderildi!');
+  } else {
+    toast('⚠️ ' + (data.error || 'Hata'));
+    document.querySelectorAll('.opt-btn').forEach(b => b.disabled = false);
+  }
+}
+
+function showAnsweredState(revealing=false) {
+  const opts = document.getElementById('player-opts');
+  const answered = document.getElementById('answered-state');
+  if (!revealing) {
+    opts.style.display = 'none';
+    answered.style.display = 'block';
+    document.getElementById('answered-icon').textContent = '⏳';
+    document.getElementById('answered-msg').textContent = 'Cevabınız alındı!';
+  }
+}
+
+async function useLifeline(type) {
+  const btn = document.getElementById('ll-' + type);
+  if (btn) btn.disabled = true;
+
+  const res = await fetch('/api/lifeline', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({player_id:playerId, lifeline:type})
+  });
+  const data = await res.json();
+  if (!data.ok) { toast('❌ ' + (data.error||'Hata')); if(btn) btn.disabled=false; return; }
+
+  if (type === 'fiftyfifty' && data.result?.remove) {
+    hiddenOpts = new Set(data.result.remove);
+    data.result.remove.forEach(i => {
+      const b = document.getElementById(`popt-${i}`);
+      if (b) { b.style.opacity = '0.2'; b.disabled = true; }
+    });
+    toast('50/50 kullanıldı!');
+  }
+  else if (type === 'hint' && data.result?.hint) {
+    const hp = document.getElementById('hint-popup');
+    hp.textContent = '💡 ' + data.result.hint;
+    hp.classList.add('show');
+  }
+}
+
+function showFinish(data) {
+  showScreen('finish-screen');
+  const lb = data.leaderboard || [];
+  const myEntry = lb.find(p => p.id === playerId);
+  const rank = myEntry?.rank || '?';
+  const myScore = myEntry?.score || data.my_score || 0;
+
+  document.getElementById('finish-rank').textContent = `#${rank}`;
+  document.getElementById('finish-score').textContent = `${myScore} puan`;
+
+  let msg = rank === 1 ? '🏆 Birinci oldun! Harika!' : rank <= 3 ? '🌟 Çok iyi! Podiyuma girdin!' : rank <= 5 ? '👍 Güzel oyun!' : '💪 Bir dahaki sefere daha iyi!';
+  document.getElementById('finish-msg').textContent = msg;
+
+  const medals = ['🥇','🥈','🥉'];
+  document.getElementById('finish-lb').innerHTML = lb.slice(0,5).map((p,i) => `
+    <div class="lb-mini-row ${p.id===playerId?'me':''}">
+      <span class="lb-mini-rank">${medals[i]||p.rank}</span>
+      <span class="lb-mini-name">${escHtml(p.name)}</span>
+      <span class="lb-mini-score">${p.score}</span>
+    </div>
+  `).join('');
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Enter ile katıl
+document.getElementById('name-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') joinGame();
+});
+document.getElementById('room-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('name-input').focus();
+});
+</script>
+</body>
+</html>
