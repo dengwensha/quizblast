@@ -314,6 +314,7 @@ def host_state():
         "current_q": game_state["current_q"],
         "total_q": len(game_state["game_questions"]),
         "timer_remaining": get_timer_remaining(),
+        "timer_duration": game_state["timer_duration"],
         "question": q,
         "answer_count": len(game_state["answers_this_round"]),
         "leaderboard": leaderboard(),
@@ -420,6 +421,20 @@ def player_state():
     answered = pid in game_state["answers_this_round"]
     lifelines = game_state.get("lifelines", {}).get(pid, {})
 
+    # Cevap durumunda doğru cevabı da gönder
+    correct_idx = None
+    player_result = None
+    if game_state["status"] == "answer" and q:
+        correct_idx = q["correct"]
+        ans_given = game_state["answers_this_round"].get(pid)
+        if ans_given is not None:
+            is_correct = ans_given == correct_idx
+            player_result = {
+                "chosen": ans_given,
+                "correct": correct_idx,
+                "is_correct": is_correct,
+            }
+
     resp = {
         "ok": True,
         "status": game_state["status"],
@@ -428,12 +443,16 @@ def player_state():
         "current_q": game_state["current_q"],
         "total_q": len(game_state["game_questions"]),
         "timer_remaining": get_timer_remaining(),
+        "timer_duration": game_state["timer_duration"],
+        "timer_start": game_state["timer_start"],
         "question": safe_question(q),
         "answered": answered,
         "leaderboard": leaderboard(),
         "my_score": game_state["players"].get(pid, {}).get("score", 0),
         "my_streak": game_state["players"].get(pid, {}).get("streak", 0),
         "lifelines": lifelines,
+        "correct_idx": correct_idx,
+        "player_result": player_result,
     }
     return jsonify(resp)
 

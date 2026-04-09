@@ -301,11 +301,13 @@ let roomCode = '';
 let pollInterval = null;
 let currentQIdx = -1;
 let lastStatus = '';
-let timerMax = 20;
-let timerAnim = null;
+let timerDuration = 20;
+let timerStartedAt = 0; // local time when timer started
+let localTimerInterval = null;
 let hiddenOpts = new Set();
+let myChosenIdx = null;
+let resultShown = false;
 
-// URL'den oda kodu al
 const urlParams = new URLSearchParams(location.search);
 const urlRoom = urlParams.get('room');
 if (urlRoom) {
@@ -321,9 +323,7 @@ function toast(msg, dur=2500) {
 }
 
 function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => {
-    s.classList.toggle('hidden', s.id !== id);
-  });
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('hidden', s.id !== id));
 }
 
 async function joinGame() {
@@ -331,24 +331,19 @@ async function joinGame() {
   const room = document.getElementById('room-input').value.trim().toUpperCase();
   const errEl = document.getElementById('join-error');
   errEl.textContent = '';
-
   if (!name) { errEl.textContent = '⚠️ Lütfen bir isim girin'; return; }
   if (!room || room.length < 2) { errEl.textContent = '⚠️ Oda kodu gerekli'; return; }
-
   const res = await fetch('/api/join', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name, room})
   });
   const data = await res.json();
   if (!data.ok) { errEl.textContent = '❌ ' + data.error; return; }
-
   playerId = data.player_id;
   playerName = data.name;
   roomCode = room;
   localStorage.setItem('qb_player_id', playerId);
   localStorage.setItem('qb_player_name', playerName);
-
-  // Waiting ekranı
   const avatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
   document.getElementById('wait-avatar').textContent = avatar;
   document.getElementById('wait-name').textContent = playerName;
@@ -359,12 +354,12 @@ async function joinGame() {
 
 function startPolling() {
   if (pollInterval) clearInterval(pollInterval);
-  pollInterval = setInterval(pollState, 1200);
+  pollInterval = setInterval(pollState, 1000);
 }
 
 async function pollState() {
   try {
-    const res = await fetch(`/api/state?player_id=${playerId}`);
+    const res = await fetch('/api/state?player_id=' + playerId);
     if (!res.ok) return;
     const data = await res.json();
     handleState(data);
@@ -377,25 +372,22 @@ function handleState(data) {
   if (data.status === 'waiting') {
     if (lastStatus !== 'waiting') showScreen('wait-screen');
   }
+
   else if (data.status === 'question') {
     const q = data.question;
     if (!q) return;
 
-    // Soru değiştiyse sıfırla
+    // Yeni soru geldiyse sıfırla
     if (q.idx !== currentQIdx) {
       currentQIdx = q.idx;
       hiddenOpts = new Set();
+      myChosenIdx = null;
+      resultShown = false;
       renderQuestion(q, data.lifelines);
       showScreen('question-screen');
-    }
-    timerMax = Math.round(data.timer_remaining + (data.answered ? 0 : 0)) || 20;
-    if (!data.answered) {
-      updateTimer(data.timer_remaining, timerMax);
-    }
-
-    // Oyuncu zaten cevap verdiyse
-    if (data.answered) {
-      showAnsweredState();
+      // Sayacı server'dan gelen remaining ile başlat
+      timerDuration = data.timer_duration || 20;
+      startLocalTimer(data.timer_remaining);
     }
 
     // Skorlar
@@ -406,19 +398,26 @@ function handleState(data) {
 
     // İlerleme
     if (q.total > 0) {
-      const pct = (q.idx / q.total) * 100;
-      document.getElementById('q-progress-fill').style.width = pct + '%';
-      document.getElementById('q-pos-label').textContent = `${q.idx+1} / ${q.total}`;
+      document.getElementById('q-progress-fill').style.width = (q.idx / q.total * 100) + '%';
+      document.getElementById('q-pos-label').textContent = (q.idx+1) + ' / ' + q.total;
+    }
+
+    // Cevap verdiyse bekleme ekranı göster
+    if (data.answered && !resultShown) {
+      showWaitingForReveal();
     }
   }
+
   else if (data.status === 'answer') {
-    // Cevap açıklandı — sadece doğru şıkkı işaretle
-    if (lastStatus === 'question') {
-      showScreen('question-screen');
-      showAnsweredState(true);
+    stopLocalTimer();
+    if (!resultShown) {
+      resultShown = true;
+      showResult(data);
     }
   }
+
   else if (data.status === 'finished') {
+    stopLocalTimer();
     clearInterval(pollInterval);
     showFinish(data);
   }
@@ -426,48 +425,32 @@ function handleState(data) {
   lastStatus = data.status;
 }
 
-function renderQuestion(q, lifelines) {
-  document.getElementById('player-q-cat').textContent = q.category || 'Genel';
-  document.getElementById('player-q-text').textContent = q.q;
-
-  // Şıklar
-  const letters = ['A','B','C','D'];
-  const colors = ['#4fc3f7','#c864dc','#f7c948','#4cdf80'];
-  const opts = document.getElementById('player-opts');
-  opts.innerHTML = q.opts.map((opt, i) => `
-    <button class="opt-btn" id="popt-${i}" onclick="selectAnswer(${i})">
-      <span class="opt-letter" style="color:${colors[i]}">${letters[i]}</span>
-      <span>${escHtml(opt)}</span>
-    </button>
-  `).join('');
-
-  // Answered state gizle
-  document.getElementById('answered-state').style.display = 'none';
-  opts.style.display = 'flex';
-
-  // Can hakları
-  const llf = document.getElementById('ll-fiftyfifty');
-  const llh = document.getElementById('ll-hint');
-  if (lifelines) {
-    llf.disabled = !lifelines.fiftyfifty;
-    llh.disabled = !lifelines.hint;
-  }
-
-  // Hint temizle
-  document.getElementById('hint-popup').classList.remove('show');
-  document.getElementById('hint-popup').textContent = '';
+// ── LOCAL TIMER (server'dan bağımsız, smooth çalışır) ──
+function startLocalTimer(serverRemaining) {
+  stopLocalTimer();
+  timerStartedAt = Date.now() - ((timerDuration - serverRemaining) * 1000);
+  localTimerInterval = setInterval(tickTimer, 100);
+  tickTimer();
 }
 
-function updateTimer(remaining, max) {
-  if (timerAnim) clearTimeout(timerAnim);
-  const circumference = 188.5;
-  const pct = Math.max(0, remaining / (max || 20));
-  const offset = circumference * (1 - pct);
+function stopLocalTimer() {
+  if (localTimerInterval) { clearInterval(localTimerInterval); localTimerInterval = null; }
+}
 
+function tickTimer() {
+  const elapsed = (Date.now() - timerStartedAt) / 1000;
+  const remaining = Math.max(0, timerDuration - elapsed);
+  updateTimerUI(remaining);
+  if (remaining <= 0) stopLocalTimer();
+}
+
+function updateTimerUI(remaining) {
+  const circumference = 188.5;
+  const pct = Math.max(0, remaining / timerDuration);
+  const offset = circumference * (1 - pct);
   const ring = document.getElementById('ring-fill');
   const numEl = document.getElementById('timer-num');
   if (!ring) return;
-
   const color = pct > 0.5 ? '#4cdf80' : pct > 0.25 ? '#f7c948' : '#ff4f6d';
   ring.style.stroke = color;
   ring.style.strokeDashoffset = offset;
@@ -475,98 +458,172 @@ function updateTimer(remaining, max) {
   numEl.style.color = color;
 }
 
+// ── SORU RENDER ──
+function renderQuestion(q, lifelines) {
+  document.getElementById('player-q-cat').textContent = q.category || 'Genel';
+  document.getElementById('player-q-text').textContent = q.q;
+  const letters = ['A','B','C','D'];
+  const colors = ['#4fc3f7','#c864dc','#f7c948','#4cdf80'];
+  const opts = document.getElementById('player-opts');
+  opts.innerHTML = q.opts.map((opt, i) => `
+    <button class="opt-btn" id="popt-${i}" onclick="selectAnswer(${i})">
+      <span class="opt-letter" style="color:${colors[i]}">${letters[i]}</span>
+      <span>${escHtml(opt)}</span>
+    </button>`).join('');
+  opts.style.display = 'flex';
+  document.getElementById('answered-state').style.display = 'none';
+  document.getElementById('hint-popup').classList.remove('show');
+  document.getElementById('hint-popup').textContent = '';
+  const llf = document.getElementById('ll-fiftyfifty');
+  const llh = document.getElementById('ll-hint');
+  if (lifelines) { llf.disabled = !lifelines.fiftyfifty; llh.disabled = !lifelines.hint; }
+}
+
+// ── CEVAP GÖNDER ──
 async function selectAnswer(idx) {
   if (hiddenOpts.has(idx)) return;
-  // Butonu seçili yap
   document.querySelectorAll('.opt-btn').forEach(b => b.disabled = true);
-  document.getElementById(`popt-${idx}`)?.classList.add('selected');
-
+  document.getElementById('popt-' + idx)?.classList.add('selected');
+  myChosenIdx = idx;
   const res = await fetch('/api/answer', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({player_id:playerId, answer:idx})
   });
   const data = await res.json();
-
   if (data.ok) {
-    showAnsweredState();
+    showWaitingForReveal();
     toast('✅ Cevabınız gönderildi!');
   } else {
     toast('⚠️ ' + (data.error || 'Hata'));
     document.querySelectorAll('.opt-btn').forEach(b => b.disabled = false);
+    myChosenIdx = null;
   }
 }
 
-function showAnsweredState(revealing=false) {
+function showWaitingForReveal() {
+  document.getElementById('player-opts').style.display = 'none';
+  const el = document.getElementById('answered-state');
+  el.style.display = 'block';
+  document.getElementById('answered-icon').textContent = '⏳';
+  document.getElementById('answered-msg').textContent = 'Cevabınız alındı!';
+  document.getElementById('lifelines').style.display = 'none';
+}
+
+// ── SONUÇ GÖSTER ──
+function showResult(data) {
+  const correctIdx = data.correct_idx;
+  const result = data.player_result;
   const opts = document.getElementById('player-opts');
   const answered = document.getElementById('answered-state');
-  if (!revealing) {
-    opts.style.display = 'none';
-    answered.style.display = 'block';
-    document.getElementById('answered-icon').textContent = '⏳';
-    document.getElementById('answered-msg').textContent = 'Cevabınız alındı!';
+
+  // Şıkları tekrar göster, renklendirerek
+  opts.style.display = 'flex';
+  answered.style.display = 'none';
+  document.getElementById('lifelines').style.display = 'none';
+
+  document.querySelectorAll('.opt-btn').forEach((btn, i) => {
+    btn.disabled = true;
+    if (i === correctIdx) btn.classList.add('correct');
+  });
+
+  if (result) {
+    if (result.is_correct) {
+      document.getElementById('popt-' + result.chosen)?.classList.add('correct');
+      showResultBanner(true, data.my_score, data.my_streak);
+    } else {
+      document.getElementById('popt-' + result.chosen)?.classList.add('wrong');
+      showResultBanner(false, data.my_score, data.my_streak);
+    }
+  } else {
+    // Cevap vermediyse
+    showResultBanner(null, data.my_score, data.my_streak);
   }
+
+  // Skoru güncelle
+  document.getElementById('my-score').textContent = data.my_score || 0;
 }
 
+function showResultBanner(isCorrect, score, streak) {
+  const el = document.getElementById('answered-state');
+  el.style.display = 'block';
+  document.getElementById('player-opts').style.display = 'flex';
+
+  if (isCorrect === true) {
+    document.getElementById('answered-icon').textContent = streak > 2 ? '🔥' : '✅';
+    document.getElementById('answered-msg').textContent = streak > 2 ? streak + 'x SERİ! Harika!' : 'Doğru! Tebrikler!';
+    el.style.background = 'rgba(76,223,128,0.1)';
+    el.style.border = '1px solid #4cdf80';
+    el.style.borderRadius = '12px';
+  } else if (isCorrect === false) {
+    document.getElementById('answered-icon').textContent = '❌';
+    document.getElementById('answered-msg').textContent = 'Yanlış cevap!';
+    el.style.background = 'rgba(255,79,109,0.1)';
+    el.style.border = '1px solid #ff4f6d';
+    el.style.borderRadius = '12px';
+  } else {
+    document.getElementById('answered-icon').textContent = '⏱';
+    document.getElementById('answered-msg').textContent = 'Süre doldu!';
+    el.style.background = 'rgba(247,201,72,0.1)';
+    el.style.border = '1px solid #f7c948';
+    el.style.borderRadius = '12px';
+  }
+  // loader gizle
+  const loader = el.querySelector('.answer-loader');
+  if (loader) loader.style.display = 'none';
+  const sub = el.querySelector('.answered-sub');
+  if (sub) sub.textContent = 'Puan: ' + (score || 0);
+}
+
+// ── CAN HAKLARI ──
 async function useLifeline(type) {
   const btn = document.getElementById('ll-' + type);
   if (btn) btn.disabled = true;
-
   const res = await fetch('/api/lifeline', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({player_id:playerId, lifeline:type})
   });
   const data = await res.json();
   if (!data.ok) { toast('❌ ' + (data.error||'Hata')); if(btn) btn.disabled=false; return; }
-
   if (type === 'fiftyfifty' && data.result?.remove) {
     hiddenOpts = new Set(data.result.remove);
     data.result.remove.forEach(i => {
-      const b = document.getElementById(`popt-${i}`);
-      if (b) { b.style.opacity = '0.2'; b.disabled = true; }
+      const b = document.getElementById('popt-' + i);
+      if (b) { b.style.opacity='0.2'; b.disabled=true; }
     });
     toast('50/50 kullanıldı!');
-  }
-  else if (type === 'hint' && data.result?.hint) {
+  } else if (type === 'hint' && data.result?.hint) {
     const hp = document.getElementById('hint-popup');
     hp.textContent = '💡 ' + data.result.hint;
     hp.classList.add('show');
   }
 }
 
+// ── SONUÇ EKRANI ──
 function showFinish(data) {
   showScreen('finish-screen');
   const lb = data.leaderboard || [];
   const myEntry = lb.find(p => p.id === playerId);
   const rank = myEntry?.rank || '?';
   const myScore = myEntry?.score || data.my_score || 0;
-
-  document.getElementById('finish-rank').textContent = `#${rank}`;
-  document.getElementById('finish-score').textContent = `${myScore} puan`;
-
-  let msg = rank === 1 ? '🏆 Birinci oldun! Harika!' : rank <= 3 ? '🌟 Çok iyi! Podiyuma girdin!' : rank <= 5 ? '👍 Güzel oyun!' : '💪 Bir dahaki sefere daha iyi!';
+  document.getElementById('finish-rank').textContent = '#' + rank;
+  document.getElementById('finish-score').textContent = myScore + ' puan';
+  let msg = rank===1 ? '🏆 Birinci oldun!' : rank<=3 ? '🌟 Podiyuma girdin!' : rank<=5 ? '👍 Güzel oyun!' : '💪 Bir dahaki sefere!';
   document.getElementById('finish-msg').textContent = msg;
-
   const medals = ['🥇','🥈','🥉'];
   document.getElementById('finish-lb').innerHTML = lb.slice(0,5).map((p,i) => `
     <div class="lb-mini-row ${p.id===playerId?'me':''}">
       <span class="lb-mini-rank">${medals[i]||p.rank}</span>
       <span class="lb-mini-name">${escHtml(p.name)}</span>
       <span class="lb-mini-score">${p.score}</span>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
 
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// Enter ile katıl
-document.getElementById('name-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') joinGame();
-});
-document.getElementById('room-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('name-input').focus();
-});
+document.getElementById('name-input').addEventListener('keydown', e => { if(e.key==='Enter') joinGame(); });
+document.getElementById('room-input').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('name-input').focus(); });
 </script>
 </body>
 </html>

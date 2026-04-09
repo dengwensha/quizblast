@@ -313,6 +313,7 @@ let answerData = null;
 let addCorrectIdx = 0;
 let editingIdx = null;
 let urgentPlayed = false;
+let lastQIdx = -1;
 
 // ── SES (Web Audio API ile — kurulum gerektirmez) ──
 let audioCtx = null;
@@ -457,17 +458,18 @@ function updateUI(data) {
   document.getElementById('finish-panel').style.display = finished ? 'block' : 'none';
 
   if (question && data.question) {
-    if (lastStatus !== 'question') {
+    const newQ = (lastStatus !== 'question') || (data.question.idx !== lastQIdx);
+    if (newQ) {
+      lastQIdx = data.question.idx;
       renderQuestion(data.question);
-      startTimer(data.timer_remaining);
+      timerMax = data.question.total > 0 ? (data.timer_duration || timerMax) : timerMax;
+      startTimer(data.timer_remaining, data.timer_duration || timerMax);
       urgentPlayed = false;
-    } else {
-      updateTimer(data.timer_remaining);
-      // Son 5 saniye müziği
-      if (data.timer_remaining <= 5 && data.timer_remaining > 0 && !urgentPlayed) {
-        urgentPlayed = true;
-        playUrgentBeep(5);
-      }
+    }
+    // Son 5 saniye müziği
+    if (data.timer_remaining <= 5 && data.timer_remaining > 0.5 && !urgentPlayed) {
+      urgentPlayed = true;
+      playUrgentBeep(5);
     }
     document.getElementById('reveal-btn').disabled = false;
   }
@@ -499,23 +501,24 @@ function renderQuestion(q) {
     </div>`).join('');
 }
 
-function startTimer(remaining) {
+function startTimer(remaining, duration) {
   clearInterval(timerInterval);
-  let t = remaining;
-  const update = () => {
+  if (duration) timerMax = duration;
+  // Server'dan gelen remaining ile yerel sayaç başlat
+  const startedAt = Date.now() - ((timerMax - remaining) * 1000);
+  const tick = () => {
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const t = Math.max(0, timerMax - elapsed);
     const tv=document.getElementById('timer-val'), tb=document.getElementById('timer-bar');
     if (!tv) return;
-    const pct = Math.max(0, t/timerMax*100);
     tv.textContent = Math.ceil(t);
-    tb.style.width = pct+'%';
-    const urgent = t <= 5;
-    tv.classList.toggle('urgent', urgent);
-    tb.classList.toggle('urgent', urgent);
-    if (urgent && t > 0) playCountdownTick();
-    t -= 1;
+    tb.style.width = Math.max(0, t/timerMax*100)+'%';
+    tv.classList.toggle('urgent', t<=5);
+    tb.classList.toggle('urgent', t<=5);
+    if (t<=0) clearInterval(timerInterval);
   };
-  update();
-  timerInterval = setInterval(() => { t -= 1; if (t < 0) { clearInterval(timerInterval); return; } update(); }, 1000);
+  tick();
+  timerInterval = setInterval(tick, 200);
 }
 
 function updateTimer(remaining) {
