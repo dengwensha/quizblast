@@ -336,6 +336,47 @@ def host_add_question():
     game_state["questions"].append(q)
     return jsonify({"ok": True, "count": len(game_state["questions"])})
 
+
+@app.route("/api/host/delete_question", methods=["POST"])
+def host_delete_question():
+    data = request.json or {}
+    if data.get("password") != game_state["host_password"]:
+        return jsonify({"ok": False}), 403
+    idx = data.get("index")
+    if idx is None or not (0 <= int(idx) < len(game_state["questions"])):
+        return jsonify({"ok": False, "error": "Gecersiz index"})
+    with state_lock:
+        game_state["questions"].pop(int(idx))
+    return jsonify({"ok": True, "count": len(game_state["questions"])})
+
+@app.route("/api/host/edit_question", methods=["POST"])
+def host_edit_question():
+    data = request.json or {}
+    if data.get("password") != game_state["host_password"]:
+        return jsonify({"ok": False}), 403
+    idx = data.get("index")
+    if idx is None or not (0 <= int(idx) < len(game_state["questions"])):
+        return jsonify({"ok": False, "error": "Gecersiz index"})
+    q = {
+        "q": data.get("q", ""),
+        "opts": data.get("opts", []),
+        "correct": int(data.get("correct", 0)),
+        "category": data.get("category", "Genel"),
+        "hint": data.get("hint", ""),
+    }
+    if not q["q"] or len(q["opts"]) < 2:
+        return jsonify({"ok": False, "error": "Eksik veri"})
+    with state_lock:
+        game_state["questions"][int(idx)] = q
+    return jsonify({"ok": True})
+
+@app.route("/api/host/questions")
+def host_questions():
+    pwd = request.args.get("password", "")
+    if pwd != game_state["host_password"]:
+        return jsonify({"ok": False}), 403
+    return jsonify({"ok": True, "questions": game_state["questions"]})
+
 @app.route("/api/host/kick", methods=["POST"])
 def host_kick():
     data = request.json or {}
